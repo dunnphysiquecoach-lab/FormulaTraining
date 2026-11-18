@@ -142,6 +142,13 @@ textarea.input{min-height:84px;resize:vertical}
 .sheet .actions .btn{flex:1}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom,0px));z-index:50;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;font-size:14px;white-space:nowrap}
 .error{color:var(--pink);font-size:13px;font-weight:500}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;counter-reset:st}
+.steps li{display:grid;grid-template-columns:32px 1fr;gap:12px;align-items:start;counter-increment:st}
+.steps li::before{content:counter(st);width:32px;height:32px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;font-family:var(--display);font-weight:700;color:var(--cyan)}
+.steps b{color:var(--fg)}
+.code-box{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px dashed var(--cyan);border-radius:10px;padding:10px 12px}
+.code-box code{font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:.08em;color:var(--cyan)}
+.linkish{background:none;border:0;color:var(--muted);text-decoration:underline;font-size:14px;padding:8px;align-self:center}
 @media (prefers-reduced-motion:no-preference){.card,.ex,.prog-option{transition:border-color .15s}.toast{animation:pop .2s ease-out}@keyframes pop{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}}
 @media (max-width:360px){h1{font-size:28px}.stat b{font-size:22px}}
 </style>
@@ -286,6 +293,7 @@ function confirmSheet(title, body, yes, onYes){
 let view = "today";
 function render(){
   if(!S.unlocked) return renderGate();
+  if(!isStandalone() && !S.skipInstall) return renderInstall();
   if(!S.profile || !prog()) return renderSetup();
   if(view==="session") return renderSession();
   if(view==="program") return renderProgram();
@@ -314,7 +322,8 @@ document.addEventListener("click",e=>{ const b=e.target.closest("[data-tab]"); i
 /* ---------------- Gate ---------------- */
 function tryCode(code){
   const c = String(code||"").trim().toLowerCase();
-  if(ACCESS_CODES.map(x=>x.toLowerCase()).includes(c)){ S.unlocked=true; save(); return true; }
+  const hit = ACCESS_CODES.find(x=>x.toLowerCase()===c);
+  if(hit){ S.unlocked=true; S.code=hit; save(); return true; }
   return false;
 }
 function renderGate(){
@@ -330,6 +339,54 @@ function renderGate(){
   </section>`, {noTabs:true});
   $("#gate").addEventListener("submit",e=>{ e.preventDefault(); if(tryCode($("#code").value)) render(); else $("#gate-err").hidden=false; });
 }
+
+/* ---------------- Add to home screen ---------------- */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); installPrompt=e; if(S.unlocked && !isStandalone() && !S.skipInstall) render(); });
+function isStandalone(){ try{ return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone===true; }catch(e){ return false; } }
+function platform(){
+  const ua=navigator.userAgent||"";
+  if(/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints>1)) return "ios";
+  if(/android/i.test(ua)) return "android";
+  return "other";
+}
+function renderInstall(){
+  const pf=platform(), code=S.code||ACCESS_CODES[0];
+  const ios = `<ol class="steps">
+      <li><span>Make sure you're in <b>Safari</b>. In another browser, copy this link and open it in Safari first.</span></li>
+      <li><span>Tap the <b>Share</b> button. It's the square with an arrow pointing up.</span></li>
+      <li><span>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</span></li>
+      <li><span>Open <b>The Formula</b> from your home screen and enter your code one last time.</span></li>
+    </ol>`;
+  const android = installPrompt
+    ? `<button class="btn btn-primary btn-block" id="install">Add to home screen</button>
+       <p class="muted" style="font-size:14px">Then open <b>The Formula</b> from your home screen.</p>`
+    : `<ol class="steps">
+      <li><span>Open this page in <b>Chrome</b>.</span></li>
+      <li><span>Tap the <b>three dots</b> in the top right.</span></li>
+      <li><span>Tap <b>Add to Home screen</b> or <b>Install app</b>, then <b>Add</b>.</span></li>
+      <li><span>Open <b>The Formula</b> from your home screen and enter your code if it asks.</span></li>
+    </ol>`;
+  const steps = pf==="ios" ? ios : pf==="android" ? android
+    : `<p class="eyebrow">On iPhone</p>${ios}<p class="eyebrow" style="margin-top:8px">On Android</p>${android}`;
+  shell(`<section class="hero" style="padding-top:28px">
+    <p class="eyebrow">Step 1 of 2</p>
+    <h1>Put it on your home screen</h1>
+    <p class="muted">Do this first. It opens like an app, full screen with my logo, and your training log stays saved on your phone.</p>
+    <div class="card">${steps}</div>
+    <div class="card"><p class="eyebrow">Your access code</p>
+      <div class="code-box"><code>${esc(code)}</code><button class="btn btn-ghost" id="copy" style="min-height:40px;padding:8px 14px">Copy</button></div>
+      <p class="muted" style="font-size:13px">You'll need it once more when you open the app from your home screen.</p></div>
+    <button class="linkish" id="skip">Skip and use it in the browser</button>
+  </section>`, {noTabs:true, noWeek:true});
+  $("#install")?.addEventListener("click", async ()=>{ try{ installPrompt.prompt(); await installPrompt.userChoice; }catch(e){} installPrompt=null; });
+  $("#copy").addEventListener("click", e=>{
+    const b=e.currentTarget;
+    try{ navigator.clipboard.writeText(code).then(()=>{ b.textContent="Copied"; }, ()=>selectCode()); }catch(err){ selectCode(); }
+  });
+  $("#skip").addEventListener("click", ()=>{ S.skipInstall=true; save(); render(); });
+}
+function selectCode(){ try{ const r=document.createRange(); r.selectNodeContents($(".code-box code")); const s=getSelection(); s.removeAllRanges(); s.addRange(r); }catch(e){} }
 
 /* ---------------- Setup ---------------- */
 function renderSetup(){
